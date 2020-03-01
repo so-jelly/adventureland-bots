@@ -1,5 +1,5 @@
-let target = "prat"
-let position = {
+const target = "prat"
+const position = {
     "map": "level1",
     "x": -296.5,
     "y": 557.5
@@ -102,6 +102,42 @@ function getEntities({
     return entities
 }
 
+function getInventory(inventory = parent.character.items) {
+    const items = []
+    for (let i = 0; i < 42; i++) {
+        if (!inventory[i]) continue // No item in this slot
+        items.push({
+            ...inventory[i],
+            index: i
+        })
+    }
+    return items
+}
+
+function transferItemsToMerchant(merchantName, itemsToKeep) {
+    const merchant = parent.entities[merchantName]
+    if (!merchant) return // No merchant nearby
+    if (distance(parent.character, merchant) > 250) return // Merchant is too far away to trade
+
+    const itemsToKeepSet = new Set(itemsToKeep)
+
+    for (let i = 0; i < parent.character.items.length; i++) {
+        const item = parent.character.items[i]
+        if (!item) continue // Empty slot
+        if (itemsToKeepSet.has(item.name)) {
+            // We want to keep this item, but we only need to keep one slot worth of this item, let's keep the first item found
+            itemsToKeepSet.delete(item.name)
+            continue
+        }
+
+        if (item.q) {
+            send_item(merchantName, i, item.q)
+        } else {
+            send_item(merchantName, i, 1)
+        }
+    }
+}
+
 function mainLoop() {
     try {
         loot()
@@ -122,7 +158,9 @@ async function attackLoop() {
                 isRIP: false
             })
             if (attacking.length) {
+                let then = Date.now()
                 await attack(attacking[0])
+                reduce_cooldown("attack", (Date.now() - then) * 0.4)
             } else {
                 let notAttacking = getEntities({
                     isMonster: true,
@@ -130,12 +168,14 @@ async function attackLoop() {
                     isWithinDistance: parent.character.range
                 })
                 if (notAttacking.length) {
+                    let then = Date.now()
                     await attack(notAttacking[0])
+                    reduce_cooldown("attack", (Date.now() - then) * 0.4)
                 }
             }
         }
     } catch (e) {
-
+        console.warn(e)
     }
     setTimeout(() => {
         attackLoop()
@@ -161,7 +201,36 @@ function healLoop() {
     }, getCooldownMS("use_hp"))
 }
 
+function infoLoop() {
+    try {
+        send_cm(merchant, {
+            "message": "info",
+            "info": {
+                "lastSeen": new Date(),
+                "shouldSwitchServer": false,
+                "monsterHuntTargets": [],
+                "items": getInventory(),
+                "attack": parent.character.attack,
+                "frequency": parent.character.frequency,
+                "goldm": parent.character.goldm,
+                "last_ms": parent.character.last_ms,
+                "luckm": parent.character.luckm,
+                "map": parent.character.map,
+                "x": parent.character.real_x,
+                "y": parent.character.real_y,
+                "s": parent.character.s
+            }
+        })
+    } catch (e) {
+
+    }
+    setTimeout(() => {
+        infoLoop()
+    }, 10000)
+}
+
 mainLoop()
 attackLoop()
 healLoop()
+infoLoop()
 smart_move(position)
