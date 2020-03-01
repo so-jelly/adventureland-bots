@@ -1,4 +1,5 @@
 const target = "prat"
+const merchant = "earthMer"
 const position = {
     "map": "level1",
     "x": -296.5,
@@ -141,6 +142,7 @@ function transferItemsToMerchant(merchantName, itemsToKeep) {
 function mainLoop() {
     try {
         loot()
+        transferItemsToMerchant(merchant, ["tracker"])
     } catch (e) {
 
     }
