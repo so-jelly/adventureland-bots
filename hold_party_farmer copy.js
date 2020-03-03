@@ -259,7 +259,7 @@ function getInventory(inventory = parent.character.items) {
 function transferItemsToMerchant(merchantName, itemsToKeep) {
     const merchant = parent.entities[merchantName]
     if (!merchant) return // No merchant nearby
-    if (distance(parent.character, merchant) > 250) return // Merchant is too far away to trade
+    if (distance(parent.character, merchant) > 400) return // Merchant is too far away to trade
 
     const itemsToKeepSet = new Set(itemsToKeep)
 
@@ -280,10 +280,20 @@ function transferItemsToMerchant(merchantName, itemsToKeep) {
     }
 }
 
+function transferGoldToMerchant(merchantName, minimumGold = 0) {
+    if (parent.character.gold <= minimumGold) return // Not enough gold
+    const merchant = parent.entities[merchantName]
+    if (!merchant) return // No merchant nearby
+    if (distance(parent.character, merchant) > 400) return // Merchant is too far away to trade
+
+    send_gold(merchantName, parent.character.gold - minimumGold)
+}
+
 function mainLoop() {
     try {
         loot()
         transferItemsToMerchant(merchant, ["tracker"])
+        transferGoldToMerchant(merchant, 0)
     } catch (e) {
 
     }
@@ -303,7 +313,7 @@ async function attackLoop() {
             if (attacking.length) {
                 let then = Date.now()
                 await attack(attacking[0])
-                reduce_cooldown("attack", (Date.now() - then) * 0.4)
+                reduce_cooldown("attack", (Date.now() - then) * 0.95)
             } else {
                 let notAttacking = getEntities({
                     isMonster: true,
@@ -313,7 +323,7 @@ async function attackLoop() {
                 if (notAttacking.length) {
                     let then = Date.now()
                     await attack(notAttacking[0])
-                    reduce_cooldown("attack", (Date.now() - then) * 0.4)
+                    reduce_cooldown("attack", (Date.now() - then) * 0.95)
                 }
             }
         }
