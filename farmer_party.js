@@ -6,6 +6,134 @@ const position = {
     "y": 557.5
 }
 
+/* ---- START PARTY STUFF ----- */
+const node_https = parent.require('https');
+
+function get_party_list() {
+    const party_list_path = "https://raw.githubusercontent.com/egehanhk/ALStuff/master/gcta/gcta_groups.json";
+
+    return new Promise((resolve, reject) => {
+        const load_time = new Date();
+
+        const request = node_https.get(party_list_path, function(response) {
+            response.on('data', function (data) {
+                try {
+                    const party_lists = JSON.parse(data);
+                    resolve(party_lists);
+                } catch (e) {
+                    console.error(e);
+                    reject();
+                    return;
+                }
+                game_log("Party list loaded. " + (new Date().getTime() - load_time) + " ms", "gray");
+                return;
+           });
+        });
+    });
+}
+
+let party_list = {};
+function update_party_list() {
+    get_party_list().then((party_lists)=>{
+        for (const group_name in party_lists) {
+            if (character.name in party_lists[group_name]) {
+                party_list = party_lists[group_name];
+                break;
+            }
+        }
+    }).catch(()=>{
+        game_log("Error retrieveing party lists", "red");
+    });
+}
+
+update_party_list();
+setInterval(update_party_list, 3600000); // every hour
+
+// Handles incoming players list
+function players_handler(event) {
+    parent.player_list = event; // Party checking is done on this list
+}
+
+// Register event
+parent.socket.on("players", players_handler);
+
+// Request player list
+setInterval(()=>{parent.socket.emit("players");}, 10000);
+
+// "players" event from server will attempt to run the function load_server_list(). This is to prevent error since it's not defined in albot
+function load_server_list() {}
+
+setInterval(()=>{
+    // Find parties nearby and lonely dudes
+    const parties_available = [];
+    const loners = [];
+    const process_player = (player) => {
+        if (player.name in party_list) {
+            if (player.party && character.party !== player.party) {
+                // If they are in another party
+                parties_available.push(player.party);
+            } else if (!player.party) {
+                // If they are not in party
+                loners.push(player.name);
+            }
+        }
+    }
+    if (parent.player_list) { // Server player list available
+        for (const player of parent.player_list) {
+            process_player(player);
+        }
+    } else {
+        for (const name in party_list) {
+            if (name in parent.entities) {
+                const player = parent.entities[name];
+                process_player(player);
+            }
+        }
+    }
+    
+    // Sort parties_available and join the alphabetically first party
+    if (character.party) parties_available.push(character.party);
+    parties_available.sort();
+    if (parties_available.length && parties_available[0] !== character.party) {
+        game_log("Left party to join " + parties_available[0] + "'s party", "gray");
+        leave_party();
+        send_party_request(parties_available[0]);
+    }
+    else if (loners.length) {
+        // If not joining another party, send invites to characters not in party
+        for (const i in loners) {
+            send_party_invite(loners[i]);
+        }
+    }
+}, 10000);
+
+// For combining functions like on_destroy, on_party_invite, etc.
+function combine_functions(fn_name, new_function) {
+    if (!global[fn_name + "_functions"]) {
+        global[fn_name + "_functions"] = [];
+        if (global[fn_name]) {
+            global[fn_name + "_functions"].push(global[fn_name]);
+        }
+        global[fn_name] = function () {
+            global[fn_name + "_functions"].forEach((fn) => fn.apply(global, arguments));
+        }
+    }
+    global[fn_name + "_functions"].push(new_function);
+}
+
+combine_functions("on_party_invite", function(name) {
+    if (name in party_list) {
+        accept_party_invite(name);
+    }
+});
+
+combine_functions("on_party_request", function(name) {
+    if (name in party_list) {
+        accept_party_request(name);
+    }
+});
+/* ----- END PARTY STUFF ----- */
+
 function getCooldownMS(skill) {
     if (parent.next_skill && parent.next_skill[skill]) {
         const ms = parent.next_skill[skill].getTime() - Date.now()
@@ -118,7 +246,7 @@ function getInventory(inventory = parent.character.items) {
 function transferItemsToMerchant(merchantName, itemsToKeep) {
     const merchant = parent.entities[merchantName]
     if (!merchant) return // No merchant nearby
-    if (distance(parent.character, merchant) > 250) return // Merchant is too far away to trade
+    if (distance(parent.character, merchant) > 400) return // Merchant is too far away to trade
 
     const itemsToKeepSet = new Set(itemsToKeep)
 
@@ -163,7 +291,7 @@ function mainLoop() {
 
 async function attackLoop() {
     try {
-        if (!parent.character.moving && !smart.moving) {
+        if (!smart.moving) {
             let attacking = getEntities({
                 isMonster: true,
                 isAttackingUs: true,
@@ -187,7 +315,7 @@ async function attackLoop() {
             }
         }
     } catch (e) {
-        console.warn(e)
+
     }
     setTimeout(() => {
         attackLoop()
@@ -211,6 +339,48 @@ function healLoop() {
     setTimeout(() => {
         healLoop()
     }, getCooldownMS("use_hp"))
+}
+
+function moveLoop() {
+    try {
+        if (!smart.moving) {
+            if (position) {
+                if (distance(parent.character, position) > 1) {
+                    smart_move(position)
+                }
+            } else {
+                // #1: Check for targets within attack range
+                let closeEntities = getEntities({
+                    isMonsterType: target,
+                    isWithinDistance: parent.character.range,
+                    isRIP: false
+                })
+                if (closeEntities.length) {
+                    stop()
+                } else {
+                    // #2: Check for visible targets
+                    let entities = getEntities({
+                        isMonsterType: target,
+                        isRIP: false
+                    })
+                    if (entities.length) {
+                        entities.sort((a, b) => {
+                            return distance(parent.character, a) > distance(parent.character, b) ? 1 : -1
+                        })
+                        xmove(entities[0].real_x, entities[0].real_y)
+                    } else {
+                        // #3: Move to target spawn
+                        smart_move(target)
+                    }
+                }
+            }
+        }
+    } catch (e) {
+
+    }
+    setTimeout(() => {
+        moveLoop()
+    }, Math.min(250, parent.character.ping))
 }
 
 function infoLoop() {
@@ -241,8 +411,10 @@ function infoLoop() {
     }, 10000)
 }
 
-mainLoop()
-attackLoop()
-healLoop()
-infoLoop()
-smart_move(position)
+setTimeout(() => {
+    mainLoop()
+    attackLoop()
+    healLoop()
+    moveLoop()
+    infoLoop()
+}, 10000)
