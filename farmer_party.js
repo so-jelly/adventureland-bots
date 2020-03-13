@@ -1,9 +1,28 @@
-const target = "prat"
 const merchant = "earthMer"
+
+/*
+const target = "prat"
 const position = {
     "map": "level1",
     "x": -296.5,
     "y": 557.5
+}
+*/
+
+/*
+const target = "croc"
+const position = {
+    "map": "main",
+    "x": 801,
+    "y": 1710
+}
+*/
+
+const target = "armadillo"
+const position = {
+    "map": "main",
+    "x": 526,
+    "y": 1846
 }
 
 /* ---- START PARTY STUFF ----- */
@@ -15,7 +34,7 @@ function get_party_list() {
     return new Promise((resolve, reject) => {
         const load_time = new Date();
 
-        const request = node_https.get(party_list_path, function(response) {
+        const request = node_https.get(party_list_path, function (response) {
             response.on('data', function (data) {
                 try {
                     const party_lists = JSON.parse(data);
@@ -27,21 +46,22 @@ function get_party_list() {
                 }
                 game_log("Party list loaded. " + (new Date().getTime() - load_time) + " ms", "gray");
                 return;
-           });
+            });
         });
     });
 }
 
 let party_list = {};
+
 function update_party_list() {
-    get_party_list().then((party_lists)=>{
+    get_party_list().then((party_lists) => {
         for (const group_name in party_lists) {
             if (character.name in party_lists[group_name]) {
                 party_list = party_lists[group_name];
                 break;
             }
         }
-    }).catch(()=>{
+    }).catch(() => {
         game_log("Error retrieveing party lists", "red");
     });
 }
@@ -58,12 +78,14 @@ function players_handler(event) {
 parent.socket.on("players", players_handler);
 
 // Request player list
-setInterval(()=>{parent.socket.emit("players");}, 10000);
+setInterval(() => {
+    parent.socket.emit("players");
+}, 10000);
 
 // "players" event from server will attempt to run the function load_server_list(). This is to prevent error since it's not defined in albot
 function load_server_list() {}
 
-setInterval(()=>{
+setInterval(() => {
     // Find parties nearby and lonely dudes
     const parties_available = [];
     const loners = [];
@@ -90,7 +112,7 @@ setInterval(()=>{
             }
         }
     }
-    
+
     // Sort parties_available and join the alphabetically first party
     if (character.party) parties_available.push(character.party);
     parties_available.sort();
@@ -98,8 +120,7 @@ setInterval(()=>{
         game_log("Left party to join " + parties_available[0] + "'s party", "gray");
         leave_party();
         send_party_request(parties_available[0]);
-    }
-    else if (loners.length) {
+    } else if (loners.length) {
         // If not joining another party, send invites to characters not in party
         for (const i in loners) {
             send_party_invite(loners[i]);
@@ -121,13 +142,13 @@ function combine_functions(fn_name, new_function) {
     global[fn_name + "_functions"].push(new_function);
 }
 
-combine_functions("on_party_invite", function(name) {
+combine_functions("on_party_invite", function (name) {
     if (name in party_list) {
         accept_party_invite(name);
     }
 });
 
-combine_functions("on_party_request", function(name) {
+combine_functions("on_party_request", function (name) {
     if (name in party_list) {
         accept_party_request(name);
     }
@@ -281,6 +302,32 @@ function mainLoop() {
         loot()
         transferItemsToMerchant(merchant, ["tracker"])
         transferGoldToMerchant(merchant, 0)
+
+        // Join Merchant Giveaways
+        for (const entity of getEntities({
+                isCtype: "merchant",
+                isWithinDistance: 400
+            })) {
+            for (const slot in entity.slots) {
+                const info = entity.slots[slot]
+                if (!info) continue
+                if (!info.giveaway) continue
+                if (info.list.includes(parent.character.id)) continue
+                parent.socket.emit("join_giveaway", {
+                    slot: slot,
+                    id: entity.id,
+                    rid: info.rid
+                })
+            }
+        }
+
+        // Get MH
+        if (distance(parent.character, G.maps.main.ref.monsterhunter) < 400) {
+            if (!parent.character.s.monsterhunt || parent.character.s.monsterhunt.c == 0) {
+                // Get a new quest
+                parent.socket.emit("monsterhunt")
+            }
+        }
     } catch (e) {
 
     }
@@ -344,6 +391,15 @@ function healLoop() {
 function moveLoop() {
     try {
         if (!smart.moving) {
+            // Get Monsterhunt
+            if (!parent.character.s.monsterhunt || parent.character.s.monsterhunt.c == 0) {
+                smart_move(G.maps.main.ref.monsterhunter)
+                setTimeout(() => {
+                    moveLoop()
+                }, 10000)
+                return
+            }
+
             if (position) {
                 if (distance(parent.character, position) > 1) {
                     smart_move(position)
@@ -371,6 +427,10 @@ function moveLoop() {
                     } else {
                         // #3: Move to target spawn
                         smart_move(target)
+                        setTimeout(() => {
+                            moveLoop()
+                        }, 10000)
+                        return
                     }
                 }
             }
